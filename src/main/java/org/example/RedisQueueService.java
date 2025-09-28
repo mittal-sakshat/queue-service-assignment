@@ -4,6 +4,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
 import java.util.UUID;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -102,6 +103,43 @@ public class RedisQueueService implements QueueService {
             client.send(request, HttpResponse.BodyHandlers.ofString());
         } catch (Exception e) {
             throw new RuntimeException(e);
+        }
+    }
+
+
+    void requeueExpiredMessages() {
+        try {
+            // Get all keys in inflight
+            HttpRequest keysRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(UPSTASH_URL + "/hkeys/inflight"))
+                    .header("Authorization", "Bearer " + TOKEN)
+                    .GET()
+                    .build();
+
+            HttpResponse<String> keysResponse = client.send(keysRequest, HttpResponse.BodyHandlers.ofString());
+            if (keysResponse.statusCode() != 200 || keysResponse.body().equals("null")) return;
+
+            List<String> keys = objectMapper.readValue(keysResponse.body(), List.class);
+            for (String receiptId : keys) {
+                // Fetch message
+                HttpRequest getRequest = HttpRequest.newBuilder()
+                        .uri(URI.create(UPSTASH_URL + "/hget/inflight/" + receiptId))
+                        .header("Authorization", "Bearer " + TOKEN)
+                        .GET()
+                        .build();
+                HttpResponse<String> getResponse = client.send(getRequest, HttpResponse.BodyHandlers.ofString());
+                if (getResponse.statusCode() != 200 || getResponse.body().equals("null")) continue;
+
+                Message message = objectMapper.readValue(getResponse.body(), Message.class);
+                if (message.isVisibleAt(System.currentTimeMillis())) {
+                    // Requeue message
+                    push("default", message.getBody());
+                    // Remove from inflight
+                    delete("default", receiptId);
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace(); // log error but continue
         }
     }
 }
