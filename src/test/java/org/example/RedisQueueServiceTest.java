@@ -71,6 +71,56 @@ class RedisQueueServiceTest {
     }
 
     @Test
+    void testDoublePullReturnsNull() throws Exception {
+        // First pull returns a message
+        Message msg = new Message("hello", 0);
+        String msgJson = objectMapper.writeValueAsString(msg);
+
+        HttpResponse<String> rpopResponse = mock(HttpResponse.class);
+        when(rpopResponse.statusCode()).thenReturn(200);
+        when(rpopResponse.body()).thenReturn(msgJson);
+
+        HttpResponse<String> inflightResponse = mock(HttpResponse.class);
+        when(inflightResponse.statusCode()).thenReturn(200);
+
+        when(client.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(rpopResponse)
+                .thenReturn(inflightResponse)
+                .thenReturn(mock(HttpResponse.class)); // second pull => nothing
+
+        Message pulled1 = service.pull("myQueue");
+        Message pulled2 = service.pull("myQueue");
+
+        assertNotNull(pulled1);
+        assertNull(pulled2);
+    }
+
+    @Test
+    void testVisibilityTimeoutExpiry() throws Exception {
+        // Simulate pulling a message and it becoming visible again after timeout
+        Message msg = new Message("hello", 0);
+        msg.setReceiptId("r1");
+        msg.setVisibleFrom(System.currentTimeMillis() - 1); // expired => visible again
+
+        String msgJson = objectMapper.writeValueAsString(msg);
+
+        HttpResponse<String> rpopResponse = mock(HttpResponse.class);
+        when(rpopResponse.statusCode()).thenReturn(200);
+        when(rpopResponse.body()).thenReturn(msgJson);
+
+        HttpResponse<String> inflightResponse = mock(HttpResponse.class);
+        when(inflightResponse.statusCode()).thenReturn(200);
+
+        when(client.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(rpopResponse)
+                .thenReturn(inflightResponse);
+
+        Message pulled = service.pull("myQueue");
+        assertNotNull(pulled);
+        assertEquals("hello", pulled.getBody());
+    }
+
+    @Test
     void testDeleteSuccess() throws Exception {
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockResponse.statusCode()).thenReturn(200);
@@ -80,6 +130,7 @@ class RedisQueueServiceTest {
 
         assertDoesNotThrow(() -> service.delete("myQueue", "receipt123"));
     }
+
 
     @Test
     void testRequeueExpiredMessage() throws Exception {
@@ -119,5 +170,7 @@ class RedisQueueServiceTest {
 
         // If no exceptions thrown, the method executed successfully
     }
+
+
 
 }
