@@ -8,7 +8,7 @@ import java.util.concurrent.TimeUnit;
 
 public class InMemoryPriorityQueueService implements QueueService {
     private final Map<String, PriorityBlockingQueue<Message>> queues;
-    private long visibilityTimeout;
+    private final long visibilityTimeout;
 
     // Comparator for priority queue: higher priority first, then FIFO by createdAt
     private final Comparator<Message> messageComparator =
@@ -55,22 +55,20 @@ public class InMemoryPriorityQueueService implements QueueService {
 
         long nowTime = now();
 
-        // Instead of just peek(), search for the first visible message
-        Optional<Message> msgOpt = queue.stream().filter(m -> m.isVisibleAt(nowTime)).findFirst();
-        if (msgOpt.isEmpty()) {
-            return null;
+        Message msg = queue.peek(); // look at head of priority queue
+        if (msg == null || !msg.isVisibleAt(nowTime)) {
+            return null; // empty or head not visible
         }
-
-        Message msg = msgOpt.get();
 
         // Mark as delivered
         msg.setReceiptId(UUID.randomUUID().toString());
         msg.incrementAttempts();
         msg.setVisibleFrom(System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(visibilityTimeout));
 
-        // Return a lightweight copy (to avoid exposing internal state)
+        // Return lightweight copy (don’t expose internal state)
         return new Message(msg.getBody(), msg.getReceiptId());
     }
+
 
     @Override
     public void delete(String queueUrl, String receiptId) {
@@ -78,6 +76,7 @@ public class InMemoryPriorityQueueService implements QueueService {
         if (queue != null) {
             long nowTime = now();
 
+            // Use iterator to find matching receiptId
             for (Iterator<Message> it = queue.iterator(); it.hasNext();) {
                 Message msg = it.next();
                 if (!msg.isVisibleAt(nowTime) && msg.getReceiptId().equals(receiptId)) {

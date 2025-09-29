@@ -25,6 +25,12 @@ class InMemoryPriorityQueueServiceTest {
     }
 
     @Test
+    void testPullFromEmptyQueueReturnsNull() {
+        Message msg = service.pull("q1");
+        assertNull(msg);
+    }
+
+    @Test
     void testFifoOrderWithinSamePriority() {
         service.push("q1", "msg1", 1);
         service.push("q1", "msg2", 1);
@@ -40,23 +46,40 @@ class InMemoryPriorityQueueServiceTest {
     void testPriorityOrder() {
         service.push("q1", "low", 1);
         service.push("q1", "high", 5);
+        service.push("q1", "medium", 3);
 
         Message first = service.pull("q1");
+        Message second = service.pull("q1");
+        Message third = service.pull("q1");
+
         assertEquals("high", first.getBody());
+        assertEquals("medium", second.getBody());
+        assertEquals("low", third.getBody());
     }
 
     @Test
-    void testVisibilityTimeout() throws InterruptedException {
+    void testDoublePullReturnsNull() {
+        service.push("q1", "only", 1);
+
+        Message first = service.pull("q1");
+        Message second = service.pull("q1"); // still invisible
+
+        assertNotNull(first);
+        assertNull(second);
+    }
+
+    @Test
+    void testVisibilityTimeoutExpiry() throws InterruptedException {
         service.push("q1", "retry", 1);
 
         Message pulled = service.pull("q1");
         assertNotNull(pulled);
 
-        // Immediately pulling again should return null (message invisible)
+        // Immediately pulling again should return null
         Message secondPull = service.pull("q1");
         assertNull(secondPull);
 
-        // Wait longer than visibility timeout (30s default in config.properties)
+        // Wait slightly longer than visibility timeout (config default = 30s)
         Thread.sleep(31000);
 
         Message retried = service.pull("q1");
@@ -71,11 +94,25 @@ class InMemoryPriorityQueueServiceTest {
         Message pulled = service.pull("q1");
         assertNotNull(pulled);
 
-        // Delete it using receiptId
         service.delete("q1", pulled.getReceiptId());
 
-        // After deletion, it should not reappear
         Message again = service.pull("q1");
         assertNull(again);
+    }
+
+    @Test
+    void testMultipleMessagesFifoSamePriority() {
+        String[] msgs = {"msg1", "msg2", "msg3"};
+        for (String m : msgs) {
+            service.push("q1", m, 2);
+        }
+
+        Message m1 = service.pull("q1");
+        Message m2 = service.pull("q1");
+        Message m3 = service.pull("q1");
+
+        assertEquals("msg1", m1.getBody());
+        assertEquals("msg2", m2.getBody());
+        assertEquals("msg3", m3.getBody());
     }
 }
